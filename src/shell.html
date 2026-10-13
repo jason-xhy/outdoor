@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>轨迹拼接 track-splice</title>
+<style>
+/*INLINE:LEAFLET_CSS*/
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+#app { display: flex; height: 100%; }
+#side { width: 350px; min-width: 350px; overflow-y: auto; padding: 12px; background: #fafafa; border-right: 1px solid #ddd; }
+#map { flex: 1; }
+h1 { font-size: 17px; margin: 4px 0 2px; }
+.sub { color: #666; font-size: 12px; margin-bottom: 10px; }
+section { margin-bottom: 14px; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px; }
+section h2 { font-size: 13px; margin: 0 0 8px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+button { padding: 5px 10px; border: 1px solid #bbb; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; }
+button:hover { background: #f0f0f0; }
+button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+button.primary:hover { background: #1565c0; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.danger { color: #c62828; }
+.row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.track-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px dashed #eee; font-size: 12.5px; }
+.track-item .sw { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+.track-item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-item .meta { color: #888; font-size: 11.5px; }
+.anchor-item { display: flex; align-items: center; gap: 4px; padding: 4px 4px; border-bottom: 1px dashed #eee; }
+.anchor-item .no { width: 20px; height: 20px; border-radius: 50%; background: #1a73e8; color: #fff; text-align: center; line-height: 20px; font-size: 11px; flex: none; }
+.anchor-item input { flex: 1; min-width: 60px; border: 1px solid #ddd; border-radius: 4px; padding: 2px 5px; font-size: 12.5px; }
+.anchor-item .snapinfo { font-size: 10.5px; color: #888; width: 100%; }
+.anchor-item .snapinfo.warn { color: #c62828; }
+.anchor-item .mini { padding: 1px 5px; font-size: 11px; }
+.stat-total { font-size: 15px; font-weight: 600; margin: 4px 0; }
+.stat-total small { font-weight: 400; color: #666; }
+.leg-row { font-size: 12px; color: #444; padding: 2px 0; border-bottom: 1px dotted #eee; }
+.err { color: #c62828; background: #fdecea; border-radius: 6px; padding: 6px 8px; font-size: 12.5px; }
+.ok-note { color: #2e7d32; font-size: 12px; }
+.warn-note { color: #b26a00; font-size: 12px; }
+#tolerance { width: 140px; }
+#gstatus { font-size: 12px; color: #555; margin-top: 4px; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: rgba(20,20,20,.85); color: #fff; padding: 7px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 9999; }
+#dropmask { position: fixed; inset: 0; background: rgba(26,115,232,.12); border: 3px dashed #1a73e8; display: none; z-index: 9998; pointer-events: none; }
+.anchor-badge { background: #1a73e8; color: #fff; border-radius: 50%; width: 22px; height: 22px; text-align: center; line-height: 22px; font-size: 12px; font-weight: 600; border: 2px solid #fff; box-shadow: 0 0 3px rgba(0,0,0,.5); }
+.leaflet-container .addmode-on { cursor: crosshair !important; }
+#baselayer-ctl { position: absolute; top: 10px; right: 10px; z-index: 500; background: #fff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); padding: 3px; display: flex; gap: 3px; }
+#baselayer-ctl button { border: none; box-shadow: none; font-size: 12px; padding: 4px 9px; border-radius: 5px; }
+#baselayer-ctl button.on { background: #1a73e8; color: #fff; }
+input[type="text"]#trackname { width: 100%; padding: 5px 7px; border: 1px solid #ccc; border-radius: 6px; }
+label.tol { font-size: 12.5px; color: #444; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h1>轨迹拼接</h1>
+    <div class="sub">多条现有轨迹为路网 · 按顺序点选锚点 · 拼出新轨迹。<b>新轨迹只由原轨迹点构成</b>，不发明路段。</div>
+
+    <section>
+      <h2>1 · 载入轨迹</h2>
+      <div class="row">
+        <button class="primary" id="btn-files">选择 KML / GPX 文件…</button>
+        <input type="file" id="files" multiple accept=".kml,.gpx" style="display:none">
+        <span class="meta" style="color:#888;font-size:12px">或直接拖入窗口</span>
+      </div>
+      <div id="tracklist"></div>
+    </section>
+
+    <section>
+      <h2>2 · 路网合并容差</h2>
+      <div class="row">
+        <label class="tol">跨轨迹合并容差 <b id="tolval">10</b> m
+          <input type="range" id="tolerance" min="5" max="30" step="1" value="10">
+        </label>
+      </div>
+      <div id="gstatus">未建路网</div>
+    </section>
+
+    <section>
+      <h2>3 · 锚点（按出行顺序）</h2>
+      <div class="row">
+        <button id="btn-addmode" class="primary">📍 地图点选：开</button>
+        <button id="btn-clear-anchors" class="danger">清空</button>
+      </div>
+      <div class="sub" style="margin:2px 0 6px">点地图任意处自动吸附到最近轨迹点；标记可拖动微调。</div>
+      <div id="anchorlist"></div>
+    </section>
+
+    <section>
+      <h2>4 · 路线与统计</h2>
+      <div class="row"><button class="primary" id="btn-route">计算路线（相邻锚点最短路）</button></div>
+      <div id="routestat"></div>
+    </section>
+
+    <section>
+      <h2>5 · 导出</h2>
+      <div class="row"><input type="text" id="trackname" placeholder="新轨迹名称，如：图平坳-金顶-太极宫"></div>
+      <div class="row">
+        <button class="primary" id="btn-kml">导出 KML</button>
+        <button class="primary" id="btn-gpx">导出 GPX</button>
+      </div>
+      <div class="sub">两步路可直接导入；锚点一并导出为命名路点。</div>
+    </section>
+
+    <section>
+      <h2>说明</h2>
+      <div class="sub" style="margin:0">
+        · 容差含义：两条不同轨迹上相距小于容差的点视为同一路口（同一条轨迹内部永不合并，防之字形抄近）。<br>
+        · 跨段不可达时会明确报错——工具绝不拉直线造路；请增大容差或补中间轨迹。<br>
+        · 底图需联网（默认卫星图 WGS84 无偏移，可切 OSM）；无网时轨迹仍可显示与导出。
+      </div>
+    </section>
+  </div>
+  <div id="map">
+    <div id="baselayer-ctl">
+      <button id="bl-sat" class="on">卫星</button>
+      <button id="bl-osm">地图</button>
+    </div>
+  </div>
+</div>
+<div id="dropmask">松开以载入轨迹文件</div>
+<div id="toast"></div>
+
+<script>
+/*INLINE:LEAFLET_JS*/
+</script>
+<script>
+/*INLINE:CORE*/
+</script>
+<script>
+/*INLINE:APP*/
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# 个人 GPS 轨迹数据属隐私，只留本地不入远端（测试见 README 说明）
+test/data/*.kml
+test/data/*.gpx
+.DS_Store
